@@ -14,11 +14,14 @@
 交互式文本.csproj      # C# 项目文件（Godot.NET.Sdk/4.7.0，net8.0，RootNamespace 为 "交互式文本"）
 project.godot          # Godot 工程配置（主场景、Autoload、渲染设置）
 scenes/                # 场景文件
-  Main.tscn            # 主场景（入口）：VNCore + Stage（背景/角色）+ UI（WebView + 桥接节点）
+  Intro.tscn           # 开场 PV 场景（入口）：WebView 全屏加载 webui/intro.html，结束切 Main.tscn
+  Main.tscn            # 主场景：VNCore + Stage（背景/角色）+ UI（WebView + 桥接节点）
 webui/                 # Web UI 前端（纯 HTML/CSS/JS，无构建步骤）
-  index.html           # UI 骨架：顶部按钮栏、对话框、选择支、全屏面板、右键菜单
+  intro.html           # 开场 PV 页：播放同目录 pv.mp4，播完/点击/缺失发 intro_done 通知引擎切主场景
+  pv.mp4               # 开场视频（占位素材，换游戏时替换）
+  index.html           # UI 骨架：主菜单（标题画面）、顶部按钮栏、对话框、选择支、全屏面板、右键菜单
   style.css            # 深色毛玻璃主题样式（CSS 变量 --accent 等可调配比色）
-  ui.js                # 打字机状态机、面板渲染、输入捕获、IPC 收发
+  ui.js                # 打字机状态机、主菜单、面板渲染、输入捕获、IPC 收发
 scripts/               # C# 源码（全部位于 交互式文本.* 命名空间下）
   Engine/              # 核心引擎
     VNCore.cs          # 主控制器：挂在主场景根节点，驱动剧情流程、输入、状态管理
@@ -36,9 +39,10 @@ scripts/               # C# 源码（全部位于 交互式文本.* 命名空间
     SoundPool.cs       # 音效池
     VoiceChannel.cs    # 语音通道
   UI/                  # 界面层（Web UI 桥接；实际渲染在 webui/ 前端）
-    WebUI.cs           # 核心桥：C#↔JS JSON 消息收发、面板数据供给（历史/存读档/设置/鉴赏）
+    WebUI.cs           # 核心桥：C#↔JS JSON 消息收发、面板数据供给（历史/存读档/设置/鉴赏）、主菜单消息分发
     UIManager.cs       # 面板管理桥：保留 Instance/IsAnyUIOpen/Show*/CloseAll，转发 WebUI
     DialogueBox.cs     # 对话框桥：保留 ShowDialogue/ShowChoices 等签名，转发 WebUI
+    IntroPlayer.cs     # 开场 PV 控制器：挂在 Intro.tscn，收到 intro_done 后切换到主场景
 story/main.json        # 剧情脚本（characters + scenes/commands）
 assets/                # 资源
   backgrounds/         # 背景图（PNG）
@@ -54,7 +58,7 @@ tools/story-editor/    # 剧情编辑器（纯前端 HTML/CSS/JS，Chrome/Edge �
 ## 构建与运行
 
 - **构建**：`dotnet build`（等价于 Godot 编辑器中的 Build；需要 .NET 8 SDK 与 Godot .NET 版）。
-- **运行**：用 Godot 4.7 .NET 版编辑器打开项目并运行（主场景 `scenes/Main.tscn`），或 `godot --path .`（需自行确保命令行 Godot 版本为 .NET 版）。
+- **运行**：用 Godot 4.7 .NET 版编辑器打开项目并运行（入口场景 `scenes/Intro.tscn`，开场 PV 后自动进入 `scenes/Main.tscn`），或 `godot --path .`（需自行确保命令行 Godot 版本为 .NET 版）。
 - **导出/部署**：项目未配置自定义导出流程，使用 Godot 编辑器标准的「项目 → 导出」流程。
 - **测试**：项目目前**没有自动化测试框架或测试用例**。验证方式为构建通过 + 在编辑器中运行游戏手动验证剧情流程。
 
@@ -86,7 +90,8 @@ tools/story-editor/    # 剧情编辑器（纯前端 HTML/CSS/JS，Chrome/Edge �
 - **C# ↔ JS 通信**：C# → JS 用 `WebView.Call("post_message", json)`，JS 侧 `document.addEventListener('message', e => JSON.parse(e.detail))`；JS → C# 用 `window.ipc.postMessage(json)`，C# 侧连接 `ipc_message` 信号（`WebUI.OnIpcMessage` 统一分发，消息均带 `type` 字段）。新增 UI 功能时在 `WebUI.cs` 的 switch 与 `webui/ui.js` 的 message switch 中成对注册。
 - **打字机在 JS 端**：`webui/ui.js` 逐字渲染，打完发 `typing_complete` → `VNCore.OnDialogueComplete()`；打字中点击本地补全，完成后点击才发 `advance`。
 - **输入由 Web 端捕获**：`forward_input_events=false`，点击/空格/滚轮/H/A/Ctrl/Esc/右键均由 `ui.js` 捕获并经 IPC 通知引擎；`VNCore._UnhandledInput` 的输入处理仅作兜底。面板打开时 JS 不再发送 `advance`，C# 侧 `UIManager.IsAnyUIOpen`（由 JS 的 `panel_opened/panel_closed` 维护）用于引擎兜底判断。
-- **运行时入口**：`VNCore._Ready()` 注册输入动作 → 加载剧情 JSON → 从 `StartSceneId` 开始 `RunNextCommand()` 循环执行指令。非阻塞指令自动推进，`say`/`narrate`/`choice` 等阻塞指令等待输入（`IsWaitingForInput` / `IsTyping` / `IsTransitioning` 标志控制）。
+- **运行时入口**：入口场景为 `scenes/Intro.tscn`（开场 PV，由 `IntroPlayer` 控制，收到 JS 的 `intro_done` 后切到 Main.tscn）。`VNCore._Ready()` 注册输入动作 → 加载剧情 JSON → 显示主菜单（标题画面）并播放菜单 BGM，等待 JS 的 `menu_start` 消息后才 `StartGame()` 进入剧情循环；读档（`load_slot`）会直接置 `GameStarted` 跳过主菜单。剧情指令耗尽（结局）后停留 10 秒自动回主菜单；右键菜单的「回到标题」发 `return_to_title` 即时返回。非阻塞指令自动推进，`say`/`narrate`/`choice` 等阻塞指令等待输入（`IsWaitingForInput` / `IsTyping` / `IsTransitioning` / `GameStarted` 标志控制）。
+- **自动存档**：0 号槽保留给自动存档（进入新场景时自动写入，同一场景只写一次），手动存档从 1 号槽开始；`WebUI` 会拒绝手动写 0 号槽，存档面板中自动存档槽标记为只读。
 - **输入动作**在代码中动态注册（不在 InputMap 中配置）：`vn_advance`（空格/回车/左键/滚轮下）、`vn_history`(H)、`vn_auto`(A)、`vn_skip`(Ctrl)、`vn_menu`(Esc)。`UIManager` 面板打开时会阻断剧情推进输入。
 - **存档**：`GameState` 所有字段必须可序列化（`System.Text.Json`，`Variant` 通过 `VariantConverter` 处理）。新增状态字段时需同步考虑 `SaveData`、`VNCore.ApplySaveData` 与读档恢复逻辑（舞台/音频快照用于读档复现演出）。
 - **音频**：`AudioManager` 为 Autoload 单例（`AudioManager.Instance`），运行时自动创建 BGM/SE/Voice 三条总线；设置界面的音量通过 `ApplyVolumes()` 应用（设置数据由 WebUI 在 `apply_settings` 消息中应用）。
