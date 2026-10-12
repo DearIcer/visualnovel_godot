@@ -1,0 +1,17 @@
+[gd_scene format=3 uid="uid://c6intropv001"]
+
+[ext_resource type="Script" uid="uid://bxpvplayer01a" path="res://scripts/UI/IntroPlayer.cs" id="1_intro"]
+
+[node name="Intro" type="Node"]
+script = ExtResource("1_intro")
+
+[node name="WebView" type="WebView" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+url = "res://webui/intro.html"
+transparent = false
+forward_input_events = false

@@ -25,6 +25,18 @@ namespace 交互式文本.Engine
         public bool IsSkipReadMode { get; set; } = false;
         public bool IsTransitioning { get; set; } = false;
 
+        /// <summary>主菜单背景音乐曲目名。</summary>
+        public const string MenuBgmTrack = "tender";
+
+        /// <summary>自动存档槽位号（0 号槽保留给自动存档，手动存档从 1 号槽开始）。</summary>
+        public const int AutoSaveSlot = 0;
+
+        /// <summary>主菜单标题背景图路径（由原生 Stage 渲染，WebView 仅叠加雾/余烬特效，避免 WebView 读不到贴图）。</summary>
+        private const string TitleBackgroundPath = "res://assets/backgrounds/title.png";
+
+        /// <summary>是否已离开主菜单进入剧情。主菜单状态下不执行指令、不响应推进输入。</summary>
+        public bool GameStarted { get; set; } = false;
+
         // 节点引用
         public DialogueBox DialogueBox { get; private set; }
         public Node2D CharacterStage { get; private set; }
@@ -37,11 +49,13 @@ namespace 交互式文本.Engine
         private bool _advanceRequested = false;
         private double _autoTimer = 0.0;
         private double _skipTimer = 0.0;
+        private double _endToTitleTimer = -1.0;
         private bool _redirectRequested = false;
         private bool _runScheduled = false;
         private bool _skipNextCommand = false;
         private Tween _backgroundTransitionTween;
         private int _transitionGeneration = 0;
+        private string _lastAutoSaveSceneId = null;
 
         public override void _Ready()
         {
@@ -67,7 +81,57 @@ namespace 交互式文本.Engine
 
             ApplyVolumes();
             WebUI.Instance?.SendStoryMeta();
+            // 主菜单优先：等待 WebUI 的 menu_start 消息后再开始执行剧情。
+            Audio.AudioManager.Instance?.PlayBgm(MenuBgmTrack, 2.0f);
+            ShowTitleBackdrop();
+        }
+
+        /// <summary>从主菜单开始新游戏：进入剧情流程并执行第一条指令。</summary>
+        public void StartGame()
+        {
+            if (GameStarted)
+                return;
+
+            GameStarted = true;
+            State.CurrentSceneId = StartSceneId;
+            State.CurrentCommandIndex = 0;
+            AutoSaveOnSceneEnter();
             RunNextCommand();
+        }
+
+        /// <summary>回到主菜单：清空舞台/音频/输入状态并重置游戏状态。</summary>
+        public void ReturnToTitle()
+        {
+            CancelTransition();
+            Audio.AudioManager.Instance?.StopBgm(0f);
+            Audio.AudioManager.Instance?.StopVoice();
+            DialogueBox?.ClearDialogue();
+            DialogueBox?.ClearChoices();
+            ResetStageForDebugSeek();
+            Audio.AudioManager.Instance?.PlayBgm(MenuBgmTrack, 2.0f);
+            ShowTitleBackdrop();
+
+            State = new GameState();
+            State.CurrentSceneId = StartSceneId;
+            State.CurrentCommandIndex = 0;
+
+            GameStarted = false;
+            IsAutoMode = false;
+            IsSkipAllMode = false;
+            IsSkipReadMode = false;
+            IsWaitingForInput = false;
+            IsTyping = false;
+            ChoicesVisible = false;
+            _advanceRequested = false;
+            _autoTimer = 0.0;
+            _skipTimer = 0.0;
+            _redirectRequested = false;
+            _skipNextCommand = false;
+            _lastAutoSaveSceneId = null;
+            _endToTitleTimer = -1.0;
+
+            WebUI.Instance?.Send(new { type = "auto_state", on = false });
+            NotifyStoryProgress();
         }
 
         public override void _Process(double delta)
@@ -98,10 +162,25 @@ namespace 交互式文本.Engine
                 _autoTimer = 0.0;
                 RunNextCommand();
             }
+
+            // 结局演出完毕后的停留倒计时：归零自动回到主菜单。
+            if (_endToTitleTimer >= 0.0)
+            {
+                _endToTitleTimer -= delta;
+                if (_endToTitleTimer < 0.0 && GameStarted)
+                {
+                    ReturnToTitle();
+                    WebUI.Instance?.Send(new { type = "show_title" });
+                }
+            }
         }
 
         public override void _UnhandledInput(InputEvent @event)
         {
+            // 主菜单状态下不响应剧情输入
+            if (!GameStarted)
+                return;
+
             // 任意 UI 面板打开时，阻断剧情推进输入
             if (UIManager.Instance != null && UIManager.Instance.IsAnyUIOpen)
                 return;
@@ -145,6 +224,9 @@ namespace 交互式文本.Engine
 
         public void Advance()
         {
+            if (!GameStarted)
+                return;
+
             if (IsWaitingForInput)
             {
                 IsWaitingForInput = false;
@@ -168,6 +250,9 @@ namespace 交互式文本.Engine
             {
                 NotifyStoryProgress();
                 GD.Print($"场景 {State.CurrentSceneId} 结束。");
+                // 指令耗尽且没有 jump/choice 接续，说明剧情（结局）演出完毕，回到主菜单。
+                if (GameStarted)
+                    FinishStoryToTitle();
                 return;
             }
 
@@ -240,6 +325,7 @@ namespace 交互式文本.Engine
             _advanceRequested = false;
             _redirectRequested = false;
             _skipNextCommand = false;
+            AutoSaveOnSceneEnter();
             RunNextCommand();
         }
 
@@ -258,6 +344,7 @@ namespace 交互式文本.Engine
             _advanceRequested = false;
             _skipNextCommand = false;
             _redirectRequested = true;
+            AutoSaveOnSceneEnter();
             ScheduleRunNextCommand();
         }
 
@@ -403,6 +490,44 @@ namespace 交互式文本.Engine
             // BgmPlaying 兼容旧版本存档：旧存档没有该字段时，只要有轨道名就视为正在播放。
             if ((audio.BgmPlaying || !string.IsNullOrEmpty(audio.BgmTrack)) && !string.IsNullOrEmpty(audio.BgmTrack))
                 manager?.PlayBgm(audio.BgmTrack, 0f, audio.BgmLoop, audio.BgmPosition);
+        }
+
+        /// <summary>在主菜单期间由原生 Stage 显示标题背景图。</summary>
+        private void ShowTitleBackdrop()
+        {
+            if (Background == null)
+                return;
+            var texture = GD.Load<Texture2D>(TitleBackgroundPath);
+            if (texture == null)
+            {
+                GD.PushWarning($"标题背景加载失败：{TitleBackgroundPath}");
+                return;
+            }
+            Background.Texture = texture;
+            Background.Modulate = Colors.White;
+        }
+
+        /// <summary>剧情（结局）演出完毕：最后一句话播放完、玩家推进后稍作停留，再自动回到主菜单。</summary>
+        private void FinishStoryToTitle()
+        {
+            IsWaitingForInput = false;
+            IsAutoMode = false;
+            IsSkipReadMode = false;
+            // 停留片刻让结局余韵落地，再由 _Process 倒计时切回标题画面。
+            _endToTitleTimer = 10.0;
+        }
+
+        /// <summary>进入新场景时自动存档到 0 号槽（读档恢复与剧情管理器跳转不触发）。</summary>
+        private void AutoSaveOnSceneEnter()
+        {
+            if (!GameStarted)
+                return;
+            // 同一场景只自动存档一次，避免选择支往返时反复写盘。
+            if (State.CurrentSceneId == _lastAutoSaveSceneId)
+                return;
+            _lastAutoSaveSceneId = State.CurrentSceneId;
+            SaveLoadManager.Save(AutoSaveSlot, this);
+            GD.Print($"已自动存档：场景 {State.CurrentSceneId}");
         }
 
         private void ResetStageForDebugSeek()

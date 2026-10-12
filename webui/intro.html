@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>青灯引 - 开场 PV</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+    body { transition: opacity 0.4s ease; }
+    body.fade-out { opacity: 0; }
+    #pv { width: 100%; height: 100%; object-fit: contain; }
+    #skip-hint {
+      position: fixed; right: 32px; bottom: 28px;
+      font-size: 13px; letter-spacing: 3px;
+      color: rgba(216, 210, 195, 0.55);
+      font-family: serif;
+      animation: blink 2s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes blink { 50% { opacity: 0.35; } }
+  </style>
+</head>
+<body>
+  <!-- 开场 PV：文件为同目录 pv.mp4，播完/点击跳过/文件缺失都会发 intro_done 通知引擎切主场景 -->
+  <video id="pv" src="pv.mp4" preload="auto" playsinline></video>
+  <div id="skip-hint">点击跳过 ▸</div>
+  <script>
+    (function () {
+      var video = document.getElementById("pv");
+      var finished = false;
+      function finish() {
+        if (finished) return;
+        finished = true;
+        video.pause();
+        document.body.classList.add("fade-out");
+        setTimeout(function () {
+          window.ipc.postMessage(JSON.stringify({ type: "intro_done" }));
+        }, 350);
+      }
+      video.addEventListener("ended", finish);
+      video.addEventListener("error", finish);
+      document.body.addEventListener("click", finish);
+      // Chromium 自动播放策略可能拦截带声音播放，失败则静音重播
+      video.play().catch(function () {
+        video.muted = true;
+        video.play().catch(finish);
+      });
+    })();
+  </script>
+</body>
+</html>

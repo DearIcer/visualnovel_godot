@@ -15,7 +15,7 @@ const overlay = $("panel-overlay");
 const panelTitle = $("panel-title");
 const panelBody = $("panel-body");
 const ctxMenu = $("context-menu");
-const autoIndicator = $("auto-indicator");
+const autoToggle = $("auto-toggle");
 const storyBar = $("story-bar");
 const storyPosition = $("story-position");
 const storyProgress = $("story-progress");
@@ -23,6 +23,7 @@ const storyTotal = $("story-total");
 const storySceneSelect = $("story-scene-select");
 const storyJumpScene = $("story-jump-scene");
 const storyCommandLabel = $("story-command-label");
+const titleScreen = $("title-screen");
 
 // ========== 状态 ==========
 let cps = 40;               // 打字速度（字符/秒）
@@ -40,6 +41,61 @@ let storyBarVisible = false;
 let storyScenes = [];
 let storyState = null;
 let storyScrubbing = false;
+
+// ========== 主菜单 ==========
+function showTitleScreen() {
+  clearDialogue();
+  clearChoices();
+  hideContextMenu();
+  document.body.classList.add("menu-open");
+  titleScreen.classList.remove("hidden");
+}
+
+function hideTitleScreen() {
+  document.body.classList.remove("menu-open");
+  titleScreen.classList.add("hidden");
+}
+
+function isTitleVisible() {
+  return !titleScreen.classList.contains("hidden");
+}
+
+document.querySelectorAll(".menu-btn").forEach((btn) => {
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const action = btn.dataset.menu;
+    if (action === "start") send("menu_start");
+    else if (action === "quit") send("menu_quit");
+    else send("open_panel", { panel: action });
+  };
+});
+
+// 主菜单作者信息：点击经 IPC 交系统浏览器打开 B 站空间
+$("author-bili").onclick = (e) => {
+  e.stopPropagation();
+  send("open_url", { url: "https://space.bilibili.com/109368146" });
+};
+
+// 初始处于主菜单（开场 PV 已由独立的 scenes/Intro.tscn + webui/intro.html 处理）
+showTitleScreen();
+
+// 主菜单余烬粒子：随机位置/大小/时长，循环上升飘散
+(function spawnEmbers() {
+  const layer = $("ember-layer");
+  if (!layer) return;
+  for (let i = 0; i < 26; i++) {
+    const ember = document.createElement("span");
+    ember.className = "ember";
+    const size = 3 + Math.random() * 5;
+    ember.style.width = size + "px";
+    ember.style.height = size + "px";
+    ember.style.left = Math.random() * 100 + "%";
+    ember.style.setProperty("--sway", (Math.random() * 120 - 60).toFixed(0) + "px");
+    ember.style.animationDuration = (9 + Math.random() * 9).toFixed(1) + "s";
+    ember.style.animationDelay = (-Math.random() * 18).toFixed(1) + "s";
+    layer.appendChild(ember);
+  }
+})();
 
 // ========== 打字机 ==========
 function startDialogue(speaker, text, color) {
@@ -181,9 +237,11 @@ function renderSlots() {
   grid.className = "slot-grid";
   data.slots.forEach((s) => {
     const card = document.createElement("div");
-    card.className = "slot-card" + (s.empty ? " empty" : "");
+    // 0 号槽为自动存档：保存模式下不可手动写入
+    const readonly = s.auto && saveLoadMode === "save";
+    card.className = "slot-card" + (s.empty ? " empty" : "") + (s.auto ? " auto" : "") + (readonly ? " readonly" : "");
     card.innerHTML =
-      '<div class="slot-no">槽位 ' + s.slot + "</div>" +
+      '<div class="slot-no">' + (s.auto ? "自动存档" : "槽位 " + s.slot) + "</div>" +
       '<div class="slot-scene"></div>' +
       '<div class="slot-time"></div>';
     card.querySelector(".slot-scene").textContent = s.empty ? "—— 空 ——" : s.scene;
@@ -193,6 +251,7 @@ function renderSlots() {
         if (s.empty) return;
         send("load_slot", { slot: s.slot });
       } else {
+        if (readonly) return;
         send("save_slot", { slot: s.slot });
       }
     };
@@ -404,6 +463,7 @@ ctxMenu.querySelectorAll(".ctx-item").forEach((item) => {
     if (action === "close") return;
     if (action === "auto") { send("toggle_auto"); return; }
     if (action === "story") { toggleStoryBar(); return; }
+    if (action === "title") { send("return_to_title"); return; }
     send("open_panel", { panel: action });
   };
 });
@@ -412,6 +472,7 @@ ctxMenu.querySelectorAll(".ctx-item").forEach((item) => {
 let autoOn = false;
 
 function handleAdvance() {
+  if (isTitleVisible()) return;
   if (currentPanel) return;
   hideContextMenu();
   if (typing) { finishTyping(); return; }
@@ -434,6 +495,7 @@ document.addEventListener("wheel", (e) => {
 
 document.addEventListener("contextmenu", (e) => {
   e.preventDefault();
+  if (isTitleVisible()) return;
   if (currentPanel) return;
   if (ctxMenu.classList.contains("hidden")) showContextMenu(e.clientX, e.clientY);
   else hideContextMenu();
@@ -468,13 +530,17 @@ document.addEventListener("keyup", (e) => {
   if (e.key === "Control") send("skip_end");
 });
 
-// 顶部按钮
-document.querySelectorAll(".top-btn:not(#story-toggle)").forEach((btn) => {
+// 顶部按钮（带 data-panel 的打开面板；自动按钮单独处理）
+document.querySelectorAll(".top-btn[data-panel]").forEach((btn) => {
   btn.onclick = (e) => {
     e.stopPropagation();
     send("open_panel", { panel: btn.dataset.panel });
   };
 });
+autoToggle.onclick = (e) => {
+  e.stopPropagation();
+  send("toggle_auto");
+};
 
 // 面板关闭按钮 / 点击遮罩空白处
 $("panel-close").onclick = closePanel;
@@ -489,7 +555,7 @@ document.addEventListener("message", (e) => {
     case "init":
       cps = msg.cps || 40;
       autoOn = !!msg.auto;
-      autoIndicator.classList.toggle("hidden", !autoOn);
+      autoToggle.classList.toggle("active", autoOn);
       break;
     case "dialogue":
       startDialogue(msg.speaker, msg.text, msg.color);
@@ -508,7 +574,7 @@ document.addEventListener("message", (e) => {
       break;
     case "auto_state":
       autoOn = !!msg.on;
-      autoIndicator.classList.toggle("hidden", !autoOn);
+      autoToggle.classList.toggle("active", autoOn);
       break;
     case "story_meta":
       storyScenes = msg.scenes || [];
@@ -541,6 +607,12 @@ document.addEventListener("message", (e) => {
     case "close_all":
       if (currentPanel) { currentPanel = null; overlay.classList.add("hidden"); }
       hideContextMenu();
+      break;
+    case "game_started":
+      hideTitleScreen();
+      break;
+    case "show_title":
+      showTitleScreen();
       break;
   }
 });

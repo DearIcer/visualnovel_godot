@@ -172,6 +172,22 @@ namespace 交互式文本
 						SendInit();
 						SendStoryMeta();
 						break;
+					case "menu_start":
+						_core.StartGame();
+						Send(new { type = "game_started" });
+						break;
+					case "menu_quit":
+						GetTree().Quit();
+						break;
+					case "open_url":
+						// 打开外部链接（如作者 B 站空间），交给系统浏览器
+						OS.ShellOpen(doc.RootElement.GetProperty("url").GetString());
+						break;
+					case "return_to_title":
+						CloseAll();
+						_core.ReturnToTitle();
+						Send(new { type = "show_title" });
+						break;
 					case "advance":
 						if (_core.IsTyping) Send(new { type = "skip_typing" });
 						else _core.Advance();
@@ -192,7 +208,14 @@ namespace 交互式文本
 						_openPanel = string.Empty;
 						break;
 					case "save_slot":
-						SaveLoadManager.Save(doc.RootElement.GetProperty("slot").GetInt32(), _core);
+						int saveSlot = doc.RootElement.GetProperty("slot").GetInt32();
+						// 0 号槽保留给自动存档，拒绝手动写入。
+						if (saveSlot == Engine.VNCore.AutoSaveSlot)
+						{
+							GD.PushWarning("0 号槽为自动存档槽，不能手动保存");
+							break;
+						}
+						SaveLoadManager.Save(saveSlot, _core);
 						SendSaveSlots("save");
 						break;
 					case "load_slot":
@@ -228,6 +251,9 @@ namespace 交互式文本
 			var data = SaveLoadManager.Load(slot);
 			if (data == null) return;
 			CloseAll();
+			// 主菜单中读档时，视为已开始游戏（JS 侧隐藏标题画面）。
+			_core.GameStarted = true;
+			Send(new { type = "game_started" });
 			_core.ApplySaveData(data);
 		}
 
@@ -249,12 +275,14 @@ namespace 交互式文本
 		private void SendSaveSlots(string mode)
 		{
 			var slots = new List<object>();
-			for (int i = 0; i < SlotCount; i++)
+			// 0 号槽为自动存档，1..SlotCount 为手动槽位。
+			for (int i = 0; i <= SlotCount; i++)
 			{
 				var data = SaveLoadManager.Load(i);
+				bool isAuto = i == Engine.VNCore.AutoSaveSlot;
 				slots.Add(data == null
-					? new { slot = i, empty = true, scene = string.Empty, time = string.Empty }
-					: new { slot = i, empty = false, scene = data.CurrentSceneId, time = data.SaveTime.ToString("yyyy-MM-dd HH:mm") });
+					? new { slot = i, auto = isAuto, empty = true, scene = string.Empty, time = string.Empty }
+					: new { slot = i, auto = isAuto, empty = false, scene = data.CurrentSceneId, time = data.SaveTime.ToString("yyyy-MM-dd HH:mm") });
 			}
 			Send(new { type = "save_slots", mode, slots });
 		}
