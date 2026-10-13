@@ -28,6 +28,10 @@ tools/godot-wry-android/rust/.cargo/config.toml
 *.old
 *~
 
+# AI 资产管线的中间产物（原始大图 / venv / 占位脚本输出）
+tools/asset-gen/
+presentation/frames/
+
 # 系统文件
 Thumbs.db
 .DS_Store

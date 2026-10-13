@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>交互式文本 — 开源视觉小说引擎 · 项目介绍</title>
+<style>
+:root {
+  --accent: #d1344f;
+  --accent-2: #7a1626;
+  --gold: #d8b56a;
+  --text: #f2eef4;
+  --text-dim: #a89fb0;
+  --ink: #0b090e;
+  --panel: rgba(255, 255, 255, 0.05);
+  --font: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-serif: "STZhongsong", "SimSun", "Songti SC", "Noto Serif SC", serif;
+  --font-mono: "Cascadia Code", "Consolas", "Courier New", monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: var(--font); color: var(--text); }
+
+/* ========== 16:9 舞台（信箱式居中） ========== */
+#stage {
+  position: absolute; left: 50%; top: 50%;
+  width: 1600px; height: 900px;
+  transform-origin: center center;
+  background: var(--ink);
+  overflow: hidden;
+  box-shadow: 0 0 120px rgba(209, 52, 79, 0.15);
+}
+#particles { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+#vignette {
+  position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.55) 100%);
+}
+
+/* ========== 幻灯片 ========== */
+.slide {
+  position: absolute; inset: 0; z-index: 3;
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 72px 110px;
+  opacity: 0; visibility: hidden;
+  transition: opacity 0.5s ease, visibility 0.5s;
+}
+.slide.active { opacity: 1; visibility: visible; }
+.slide.active .anim { animation: rise 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+.slide.active .anim.d1 { animation-delay: 0.08s; }
+.slide.active .anim.d2 { animation-delay: 0.16s; }
+.slide.active .anim.d3 { animation-delay: 0.24s; }
+.slide.active .anim.d4 { animation-delay: 0.32s; }
+.slide.active .anim.d5 { animation-delay: 0.4s; }
+@keyframes rise { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+
+.kicker {
+  font-size: 17px; letter-spacing: 10px; color: var(--accent);
+  margin-bottom: 18px; font-weight: 600;
+}
+h1.title {
+  font-family: var(--font-serif); font-size: 92px; letter-spacing: 18px;
+  color: #f5ecdf; line-height: 1.15;
+  text-shadow: 0 0 40px rgba(209, 52, 79, 0.5);
+}
+h2.title {
+  font-family: var(--font-serif); font-size: 52px; letter-spacing: 8px;
+  color: #f0e7d8; margin-bottom: 34px;
+}
+h2.title::after {
+  content: ""; display: block; width: 88px; height: 3px; margin-top: 18px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+}
+.subtitle { font-size: 24px; color: var(--text-dim); letter-spacing: 4px; }
+p.lead { font-size: 22px; color: var(--text-dim); line-height: 2; max-width: 980px; }
+p.lead b, p.lead strong { color: var(--text); font-weight: 600; }
+.accent { color: var(--accent); }
+.gold { color: var(--gold); }
+
+/* 特性网格 */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 10px; }
+.card {
+  background: var(--panel); border: 1px solid rgba(209, 52, 79, 0.22);
+  border-radius: 12px; padding: 26px 26px 22px;
+  backdrop-filter: blur(6px);
+}
+.card h3 { font-size: 21px; margin-bottom: 10px; color: #f0e7d8; letter-spacing: 2px; }
+.card p { font-size: 15.5px; color: var(--text-dim); line-height: 1.8; }
+.card .icon { font-size: 26px; margin-bottom: 12px; display: block; }
+
+/* 代码块 */
+.code {
+  background: rgba(8, 6, 10, 0.85); border: 1px solid rgba(209, 52, 79, 0.25);
+  border-radius: 12px; padding: 26px 32px; font-family: var(--font-mono);
+  font-size: 17.5px; line-height: 1.75; color: #d8d0dc; white-space: pre;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.5);
+}
+.code .k { color: #e06c85; }   /* 键名/指令 */
+.code .s { color: #b8d8a0; }   /* 字符串 */
+.code .c { color: #6f6780; }   /* 注释 */
+.code .n { color: #d8b56a; }   /* 数字 */
+
+/* 目录树 */
+.tree { font-family: var(--font-mono); font-size: 18.5px; line-height: 1.9; color: #cfc7d6; white-space: pre; }
+.tree .dir { color: var(--gold); }
+.tree .cm { color: #6f6780; }
+
+/* 架构图 */
+.flow { display: flex; align-items: center; gap: 0; margin-top: 18px; }
+.flow .node {
+  flex: 1; text-align: center; padding: 26px 12px; border-radius: 12px;
+  background: var(--panel); border: 1px solid rgba(209, 52, 79, 0.25);
+}
+.flow .node h3 { font-size: 20px; letter-spacing: 3px; margin-bottom: 8px; color: #f0e7d8; }
+.flow .node p { font-size: 14.5px; color: var(--text-dim); line-height: 1.7; }
+.flow .arrow { font-size: 34px; color: var(--accent); padding: 0 18px; }
+
+/* demo 页 */
+.demo-bg {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  filter: brightness(0.38) saturate(1.1);
+}
+.demo-sprite {
+  position: absolute; bottom: 0; height: 780px;
+  filter: drop-shadow(0 12px 30px rgba(0,0,0,0.7));
+}
+.branch {
+  display: flex; gap: 18px; margin-top: 8px;
+}
+.branch .b {
+  flex: 1; background: var(--panel); border: 1px solid rgba(209,52,79,0.25);
+  border-radius: 12px; padding: 20px 22px;
+}
+.branch .b h3 { font-size: 19px; letter-spacing: 2px; color: var(--gold); margin-bottom: 8px; }
+.branch .b p { font-size: 15px; color: var(--text-dim); line-height: 1.8; }
+.tag {
+  display: inline-block; font-size: 13px; padding: 2px 12px; border-radius: 99px;
+  border: 1px solid var(--accent); color: var(--accent); letter-spacing: 2px; margin-right: 8px;
+}
+
+/* 步骤条 */
+.steps { display: flex; flex-direction: column; gap: 16px; margin-top: 6px; }
+.step { display: flex; align-items: baseline; gap: 20px; }
+.step .no {
+  font-family: var(--font-serif); font-size: 30px; color: var(--accent);
+  min-width: 56px; text-align: right;
+}
+.step .tx { font-size: 20px; color: var(--text); line-height: 1.75; }
+.step .tx small { display: block; font-size: 15px; color: var(--text-dim); }
+
+/* ========== 控制层 ========== */
+#progress {
+  position: absolute; left: 0; bottom: 0; height: 4px; z-index: 10;
+  background: linear-gradient(90deg, var(--accent), var(--gold));
+  width: 0%;
+}
+#hud {
+  position: absolute; right: 28px; bottom: 20px; z-index: 10;
+  display: flex; gap: 14px; align-items: center;
+  font-size: 14px; color: var(--text-dim); letter-spacing: 1px;
+}
+#hud button {
+  background: rgba(255,255,255,0.07); color: var(--text); border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 8px; padding: 7px 16px; font-size: 14px; cursor: pointer; font-family: var(--font);
+}
+#hud button:hover { background: rgba(209,52,79,0.3); }
+#pageno {
+  position: absolute; left: 28px; bottom: 20px; z-index: 10;
+  font-family: var(--font-mono); font-size: 14px; color: var(--text-dim); letter-spacing: 2px;
+}
+#start-overlay {
+  position: absolute; inset: 0; z-index: 20; background: rgba(5,4,8,0.92);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 26px;
+  cursor: pointer; transition: opacity 0.6s;
+}
+#start-overlay.hidden { opacity: 0; pointer-events: none; }
+#start-overlay .play {
+  width: 110px; height: 110px; border-radius: 50%;
+  border: 2px solid var(--accent); display: flex; align-items: center; justify-content: center;
+  font-size: 40px; color: var(--accent); padding-left: 10px;
+  box-shadow: 0 0 60px rgba(209,52,79,0.4);
+}
+#start-overlay p { color: var(--text-dim); font-size: 16px; letter-spacing: 4px; }
+
+/* 调试/截图模式：禁用动画与过渡（?autoplay=0 时由脚本加到根元素） */
+.noanim .anim { animation: none !important; }
+.noanim .slide { transition: none !important; }
+.noanim #start-overlay { transition: none !important; display: none !important; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="particles"></canvas>
+  <div id="vignette"></div>
+
+  <!-- 1 标题 -->
+  <section class="slide" data-dur="5">
+    <div class="kicker anim">OPEN SOURCE · VISUAL NOVEL ENGINE</div>
+    <h1 class="title anim d1">交互式文本</h1>
+    <p class="subtitle anim d2" style="margin-top:22px;">基于 Godot 4.7（.NET / C#）+ Web UI 的开源视觉小说引擎</p>
+    <p class="lead anim d3" style="margin-top:34px;">写一份 <span class="accent">JSON</span>，其余交给引擎——演出、立绘、音乐、分支、存档，一应俱全。</p>
+  </section>
+
+  <!-- 2 特性 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker anim">FEATURES</div>
+    <h2 class="title anim d1">开箱即用的完整能力</h2>
+    <div class="grid">
+      <div class="card anim d1"><span class="icon">📜</span><h3>JSON 剧情驱动</h3><p>对话、旁白、选择支、变量、条件跳转，全部用 JSON 描述，零代码写剧本。</p></div>
+      <div class="card anim d2"><span class="icon">🎭</span><h3>完整演出系统</h3><p>背景淡入淡出、立绘表情交叉淡化、位置移动、BGM 交叉淡入、音效与语音。</p></div>
+      <div class="card anim d3"><span class="icon">🌿</span><h3>分支与多结局</h3><p>choice 选择支 + set/if 变量条件，轻松实现多路线多结局结构。</p></div>
+      <div class="card anim d3"><span class="icon">💾</span><h3>存档 / 读档</h3><p>多存档位 + 场景自动存档，舞台与音频快照完整复现演出现场。</p></div>
+      <div class="card anim d4"><span class="icon">🖥️</span><h3>Web UI 界面层</h3><p>WebView 渲染的毛玻璃 UI：打字机、历史回顾、设置、鉴赏、右键菜单。</p></div>
+      <div class="card anim d5"><span class="icon">🤖</span><h3>AI 制作管线</h3><p>内置 godot-vn-creator 技能：AI 生成立绘背景、自动配乐、一键验证。</p></div>
+    </div>
+  </section>
+
+  <!-- 3 架构 -->
+  <section class="slide" data-dur="7">
+    <div class="kicker anim">ARCHITECTURE</div>
+    <h2 class="title anim d1">三层架构，一目了然</h2>
+    <div class="flow anim d2">
+      <div class="node"><h3>story/*.json</h3><p>剧情脚本<br>characters + scenes + commands</p></div>
+      <div class="arrow">➜</div>
+      <div class="node"><h3>引擎层 C#</h3><p>VNCore 主控制器<br>CommandRunner 指令执行<br>GameState 状态 / 存档</p></div>
+      <div class="arrow">➜</div>
+      <div class="node"><h3>渲染层</h3><p>Stage：原生背景与立绘<br>WebView：透明叠加 Web UI<br>AudioManager：三条音频总线</p></div>
+    </div>
+    <p class="lead anim d3" style="margin-top:40px;">C# 与 JS 通过 <b>JSON 消息双向通信</b>：引擎只管状态与舞台，界面全部交给 Web 前端——换皮、改主题不动一行 C#。</p>
+  </section>
+
+  <!-- 4 上手：写剧情 -->
+  <section class="slide" data-dur="9">
+    <div class="kicker anim">QUICK START · 1/3</div>
+    <h2 class="title anim d1">第一步：写一段剧情</h2>
+    <div class="code anim d2"><span class="c">// story/main.json</span>
+{
+  <span class="k">"characters"</span>: { <span class="k">"mio"</span>: { <span class="k">"displayName"</span>: <span class="s">"澪"</span>, <span class="k">"color"</span>: <span class="s">"#c0392b"</span> } },
+  <span class="k">"scenes"</span>: {
+    <span class="k">"start"</span>: { <span class="k">"commands"</span>: [
+      { <span class="k">"cmd"</span>: <span class="s">"bg"</span>,    <span class="k">"asset"</span>: <span class="s">"street_dusk"</span>, <span class="k">"fade"</span>: <span class="n">1.0</span> },
+      { <span class="k">"cmd"</span>: <span class="s">"bgm"</span>,   <span class="k">"action"</span>: <span class="s">"play"</span>, <span class="k">"track"</span>: <span class="s">"daily"</span> },
+      { <span class="k">"cmd"</span>: <span class="s">"show"</span>,  <span class="k">"character"</span>: <span class="s">"mio"</span>, <span class="k">"emotion"</span>: <span class="s">"smile"</span> },
+      { <span class="k">"cmd"</span>: <span class="s">"say"</span>,   <span class="k">"character"</span>: <span class="s">"mio"</span>, <span class="k">"text"</span>: <span class="s">"明天见哦，透君。"</span> }
+    ] }
+  }
+}</div>
+  </section>
+
+  <!-- 5 上手：放素材 -->
+  <section class="slide" data-dur="7">
+    <div class="kicker anim">QUICK START · 2/3</div>
+    <h2 class="title anim d1">第二步：按约定放素材</h2>
+    <div class="tree anim d2"><span class="dir">assets/</span>
+├─ <span class="dir">backgrounds/</span>  street_dusk.png        <span class="cm">← bg 指令按文件名引用</span>
+├─ <span class="dir">characters/mio/</span> smile.png        <span class="cm">← 角色id/表情名.png</span>
+├─ <span class="dir">bgm/</span>           daily.ogg             <span class="cm">← 支持 ogg / mp3 / wav</span>
+└─ <span class="dir">se/</span>            heartbeat.wav         <span class="cm">← 音效</span></div>
+    <p class="lead anim d3" style="margin-top:36px;">没有素材？用内置的 <b>godot-vn-creator</b> 技能：剧本大纲 → AI 生成立绘与背景 → itch.io 免版税配乐 → 自动构建验证，一条流水线直达成品。</p>
+  </section>
+
+  <!-- 6 上手：运行 -->
+  <section class="slide" data-dur="6">
+    <div class="kicker anim">QUICK START · 3/3</div>
+    <h2 class="title anim d1">第三步：构建并运行</h2>
+    <div class="steps">
+      <div class="step anim d1"><span class="no">01</span><div class="tx">安装 .NET 8 SDK 与 Godot 4.7 .NET 版<small>Windows 需 WebView2 Runtime（Win10/11 通常自带）</small></div></div>
+      <div class="step anim d2"><span class="no">02</span><div class="tx"><span style="font-family:var(--font-mono);color:var(--gold);">dotnet build</span> 编译 C# 脚本<small>等价于 Godot 编辑器中的 Build</small></div></div>
+      <div class="step anim d3"><span class="no">03</span><div class="tx">用 Godot 编辑器打开项目，运行主场景<small>开场 PV → 标题画面 → 开始游戏</small></div></div>
+    </div>
+  </section>
+
+  <!-- 7 分支与多结局 -->
+  <section class="slide" data-dur="8">
+    <div class="kicker anim">BRANCHING</div>
+    <h2 class="title anim d1">选择支 × 变量 = 多结局</h2>
+    <div class="code anim d2">{ <span class="k">"cmd"</span>: <span class="s">"choice"</span>, <span class="k">"options"</span>: [
+    { <span class="k">"text"</span>: <span class="s">"「我不会逃。」"</span>, <span class="k">"target"</span>: <span class="s">"path_understand"</span> },
+    { <span class="k">"text"</span>: <span class="s">"「别靠近我。」"</span>,   <span class="k">"target"</span>: <span class="s">"path_reject"</span> } ] },
+
+{ <span class="k">"cmd"</span>: <span class="s">"set"</span>, <span class="k">"name"</span>: <span class="s">"path"</span>, <span class="k">"value"</span>: <span class="s">"accept"</span> },
+<span class="c">// 结局分流：条件不满足则跳过下一条指令</span>
+{ <span class="k">"cmd"</span>: <span class="s">"if"</span>, <span class="k">"name"</span>: <span class="s">"path"</span>, <span class="k">"op"</span>: <span class="s">"=="</span>, <span class="k">"value"</span>: <span class="s">"accept"</span> },
+{ <span class="k">"cmd"</span>: <span class="s">"jump"</span>, <span class="k">"target"</span>: <span class="s">"ending_redline"</span> }</div>
+    <p class="lead anim d3" style="margin-top:30px;">玩家的每个选择沉淀为变量，变量决定命运——示例 Demo《红线缠心》用这套结构实现了 <b>4 条结局线</b>。</p>
+  </section>
+
+  <!-- 8 Demo 展示 -->
+  <section class="slide" data-dur="7">
+    <div class="demo-bg" style="background-image:url('assets/street_night.png');"></div>
+    <img class="demo-sprite" src="assets/mio_smile.png" style="left:60px;" alt="">
+    <img class="demo-sprite" src="assets/mio_yandere.png" style="left:480px;" alt="">
+    <div style="position:relative; margin-left:780px;">
+      <div class="kicker anim">OFFICIAL DEMO</div>
+      <h2 class="title anim d1">示例 Demo<br>《红线缠心》</h2>
+      <p class="lead anim d2">病娇 × 微恐怖 · 28 场景 · 4 结局<br>约 1.5 小时流程，全部素材由 AI 管线生成。</p>
+      <p class="lead anim d3" style="margin-top:22px; font-size:18px;">立绘 16 张 · 背景 14 张 · BGM 6 首<br>从空白到可玩成品，仅用一次流水线。</p>
+    </div>
+  </section>
+
+  <!-- 9 分支结构 -->
+  <section class="slide" data-dur="6">
+    <div class="kicker anim">REPOSITORY</div>
+    <h2 class="title anim d1">仓库分支说明</h2>
+    <div class="branch">
+      <div class="b anim d1"><span class="tag">基座</span><h3>master</h3><p>桌面端引擎基座。干净的引擎 + Web UI，拿来即写你自己的故事。</p></div>
+      <div class="b anim d2"><span class="tag">基座</span><h3>master_Android</h3><p>Android 端引擎基座。同一套剧情 JSON，移动端直接运行。</p></div>
+      <div class="b anim d3"><span class="tag">示例</span><h3>yandere</h3><p>示例 Demo《红线缠心》完整内容：剧本、AI 素材、配乐与署名文件。</p></div>
+    </div>
+    <p class="lead anim d4" style="margin-top:36px;">Fork 之后从 <b>master</b> 出发；不确定能做成什么样，就切到 <b>yandere</b> 看看答案。</p>
+  </section>
+
+  <!-- 10 结尾 -->
+  <section class="slide" data-dur="7" style="align-items:center; text-align:center;">
+    <div class="demo-bg" style="background-image:url('assets/title.png'); filter:brightness(0.3);"></div>
+    <div style="position:relative;">
+      <h1 class="title anim" style="font-size:64px; letter-spacing:12px;">写下你的故事</h1>
+      <p class="subtitle anim d1" style="margin-top:24px;">交互式文本 · Godot Visual Novel Engine</p>
+      <p class="lead anim d2" style="margin:40px auto 0; max-width:900px; font-size:17px; line-height:2.1;">
+        引擎本体以 MIT License 开源。<br>
+        演示页 BGM：「chill guitar」— D-Wheat Music（itch.io，免费可用于个人与商业用途）。<br>
+        Demo 配乐另见 assets/bgm/CREDITS.md（Vacuous BGM / YUKARINOTI，署名后免费使用）。<br>
+        Demo 美术素材由 AI（gemini-nano-banana-2.1）生成，仅供学习参考。</p>
+    </div>
+  </section>
+
+  <div id="progress"></div>
+  <div id="pageno"></div>
+  <div id="hud">
+    <button id="btn-auto">⏸ 自动播放</button>
+    <button id="btn-mute">🔊 音乐</button>
+    <button id="btn-replay">↺ 重播</button>
+  </div>
+
+  <div id="start-overlay">
+    <div class="play">▶</div>
+    <p>点击开始播放（含音乐）</p>
+  </div>
+</div>
+
+<audio id="bgm" src="assets/bgm.ogg" loop></audio>
+
+<script>
+/* ========== 舞台自适应缩放 ========== */
+const stage = document.getElementById("stage");
+function fit() {
+  const s = Math.min(window.innerWidth / 1600, window.innerHeight / 900);
+  stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+}
+window.addEventListener("resize", fit); fit();
+
+/* ========== 粒子：漂浮的红线余烬 ========== */
+const cv = document.getElementById("particles"), ctx = cv.getContext("2d");
+cv.width = 1600; cv.height = 900;
+const parts = [];
+for (let i = 0; i < 70; i++) {
+  parts.push({
+    x: Math.random() * 1600, y: Math.random() * 900,
+    r: Math.random() * 2.2 + 0.6,
+    vx: (Math.random() - 0.5) * 0.25, vy: -(Math.random() * 0.45 + 0.12),
+    a: Math.random() * 0.5 + 0.15, tw: Math.random() * Math.PI * 2
+  });
+}
+(function tick() {
+  ctx.clearRect(0, 0, 1600, 900);
+  const t = performance.now() / 1000;
+  for (const p of parts) {
+    p.x += p.vx; p.y += p.vy;
+    if (p.y < -10) { p.y = 910; p.x = Math.random() * 1600; }
+    const alpha = p.a * (0.6 + 0.4 * Math.sin(t * 2 + p.tw));
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(209, 64, 82, ${alpha})`;
+    ctx.shadowColor = "rgba(209,52,79,0.8)"; ctx.shadowBlur = 8;
+    ctx.fill(); ctx.shadowBlur = 0;
+  }
+  requestAnimationFrame(tick);
+})();
+
+/* ========== 播放控制 ========== */
+const slides = [...document.querySelectorAll(".slide")];
+const pageno = document.getElementById("pageno");
+const progress = document.getElementById("progress");
+const bgm = document.getElementById("bgm");
+const params = new URLSearchParams(location.search);
+let idx = 0, auto = params.get("autoplay") !== "0", timer = null, t0 = 0, dur = 0, raf = null;
+let muted = false;
+
+function show(i) {
+  idx = Math.max(0, Math.min(slides.length - 1, i));
+  slides.forEach((s, k) => s.classList.toggle("active", k === idx));
+  pageno.textContent = String(idx + 1).padStart(2, "0") + " / " + String(slides.length).padStart(2, "0");
+  dur = parseFloat(slides[idx].dataset.dur || "10") * 1000;
+  t0 = performance.now();
+  clearTimeout(timer);
+  cancelAnimationFrame(raf);
+  if (auto) {
+    timer = setTimeout(() => show(idx + 1 >= slides.length ? 0 : idx + 1), dur);
+    (function bar() {
+      progress.style.width = Math.min(100, (performance.now() - t0) / dur * 100) + "%";
+      if (auto) raf = requestAnimationFrame(bar);
+    })();
+  } else {
+    progress.style.width = "0%";
+  }
+}
+function next() { show(idx + 1 >= slides.length ? 0 : idx + 1); }
+function prev() { show(idx - 1 < 0 ? slides.length - 1 : idx - 1); }
+
+document.getElementById("btn-auto").onclick = (e) => {
+  auto = !auto; e.target.textContent = auto ? "⏸ 自动播放" : "▶ 自动播放";
+  show(idx);
+};
+document.getElementById("btn-mute").onclick = (e) => {
+  muted = !muted; bgm.muted = muted;
+  e.target.textContent = muted ? "🔇 音乐" : "🔊 音乐";
+};
+document.getElementById("btn-replay").onclick = () => show(0);
+stage.addEventListener("click", (e) => { if (e.target.closest("#hud") || e.target.closest("#start-overlay")) return; next(); });
+window.addEventListener("keydown", (e) => {
+  if (e.key === "ArrowRight" || e.key === " " || e.key === "Enter") next();
+  if (e.key === "ArrowLeft") prev();
+  if (e.key.toLowerCase() === "m") document.getElementById("btn-mute").click();
+});
+
+/* ========== 开始遮罩（浏览器自动播放策略需要一次用户交互） ========== */
+const overlay = document.getElementById("start-overlay");
+if (params.get("autoplay") === "0") {
+  overlay.classList.add("hidden");   // 截图/调试模式
+  document.documentElement.classList.add("noanim");
+} else {
+  auto = false;
+  overlay.addEventListener("click", () => {
+    overlay.classList.add("hidden");
+    bgm.volume = 0.55; bgm.play().catch(() => {});
+    auto = true; show(0);
+  }, { once: true });
+}
+if (params.get("clean") === "1") {   // 录制模式：隐藏按钮与页码
+  document.getElementById("hud").style.display = "none";
+  document.getElementById("pageno").style.display = "none";
+}
+show(parseInt(params.get("slide") || "0", 10));
+</script>
+</body>
+</html>
